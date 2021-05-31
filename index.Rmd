@@ -1,0 +1,178 @@
+---
+title: "Generating Long-range-dependent Time series"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+    social: menu
+    source_code: embed
+runtime: shiny
+---
+
+```{r global, message=FALSE, include=FALSE}
+# shiny------------------------
+library(shiny)
+library(shinyMatrix)
+library(flexdashboard)
+# wrangling data and plot------
+library(tidyverse)
+library(plotly)
+library(forecast)
+# time series------------------
+library(multiwave)
+```
+
+Sidebar {.sidebar}
+======================================================================
+
+```{r}
+numericInput("seed", label = "Random seed:", value = 1, min = 1, step = 1)
+sliderInput("N", label = "Time Series Size:", min = 100, max = 5000, value = 200, step = 100)
+sliderInput("m", label =  "Time series Dimension:", min = 2, max = 20, value = 2, step = 1)
+sliderInput("ndim", label =  "Block Number of cov_matrix:", min = 1, max = 10, value = 1, step = 1)
+sliderInput("burnin", label =  "Burn-in:", min = 1000, max = 10000, value = 2000, step = 1000)
+sliderInput("lag.max", label = "ACF Lag until:", min = 10, max = 1000, value = 100, step = 1)
+```
+
+See **How to** menu why this generated dataset is long-range dependent process.
+
+Download `cor.csv` and change value of correlation matrix for FARIMA model if you want:
+
+```{r}
+# correlation upload----------------------
+cov_data <- reactive({
+  COV <- diag(input$m)
+  colnames(COV) <- paste0("x", 1:ncol(COV))
+  COV %>% 
+    as.data.frame()
+})
+output$covdt <- downloadHandler(
+  filename = "cor.csv",
+  content = function(file) {
+    cov_data() %>% 
+      write_csv(file = file)
+  }
+)
+downloadLink("covdt", label = "Change correlation matrix")
+fileInput(
+  "covfile", 
+  label = "Download and reupload the file", 
+  multiple = FALSE, 
+  accept = ".csv",
+  buttonLabel = "Browse/drag file",
+  placeholder = "No file selected"
+)
+```
+
+You can download the simulation result, `lrd.csv`:
+
+```{r}
+# dataset---------------------------------
+lrd_data <- reactive({
+  # input---------------------------------
+  if (is.null(input$covfile)) {
+    COV <- diag(input$m)
+  } else {
+    COV <- read.csv(input$covfile$datapath, header = TRUE, stringsAsFactors = FALSE) %>% as.matrix()
+  }
+  COV <- kronecker(diag(input$ndim), COV)
+  # LRD parameter---------------------------
+  d <- runif(input$m, .1, .45)
+  d <- floor(100 * d) / 100
+  # generate------------------------------
+  set.seed(input$seed)
+  fivarma(
+    N = input$N, d = d, cov_matrix = COV,
+    VAR = NULL, VMA = NULL,
+    skip = input$burnin
+  )$x %>% 
+    as.data.frame() %>% 
+    tibble() %>% 
+    rename_all(~str_replace_all(., pattern = "V", replacement = "x"))
+})
+# download button-------------------------
+output$data <- downloadHandler(
+  filename = "lrd.csv",
+  content = function(file) {
+    lrd_data() %>% 
+      write_csv(file = file)
+  }
+)
+downloadLink("data", label = "Download Vector LRD Series")
+```
+
+The original code courtesy of professor [Changryong Baek](https://sites.google.com/view/crbaek).
+
+LRD Simulation
+======================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### Time plot
+
+```{r}
+# ggplot----------------------------------
+gg_lrd <- reactive({
+  lrd_data() %>% 
+    # as.data.frame() %>% 
+    mutate(time_point = 1:n()) %>% 
+    pivot_longer(-time_point, names_to = "variable", values_to = "values") %>% 
+    ggplot(aes(x = time_point)) +
+    geom_path(aes(y = values, colour = variable), alpha = .7, show.legend = FALSE) +
+    labs(
+      x = "Time",
+      y = element_blank()
+    ) +
+    theme_minimal()
+})
+```
+
+```{r}
+output$timeplot <- renderPlotly({
+  ggplotly(gg_lrd())
+})
+plotlyOutput("timeplot")
+```
+
+Row
+-----------------------------------------------------------------------
+
+### CCF
+
+```{r}
+output$ccf <- renderPlotly({
+  ggacf <- 
+    ggAcf(lrd_data() %>% as.matrix(), lag.max = input$lag.max) +
+    theme(axis.title = element_blank()) +
+    labs(title = element_blank())
+  ggplotly(ggacf)
+})
+plotlyOutput("ccf")
+```
+
+
+How to
+======================================================================
+
+### FARIMA
+
+We generate (multivariate) long-range-dependent time series using (vector) [FARIMA(0, d, 0)](https://en.wikipedia.org/wiki/Autoregressive_fractionally_integrated_moving_average) process. Here, $d \in (0, 0.5)$ gives LRD series. We choose $d$ randomly for each variable.
+
+In case of 1-dim,
+
+$$\phi(B) (1 - B)^d X_t = \theta(B) Z_t$$
+
+When m-dim, i.e. 
+
+$$\Phi(B) \mathbf{U}_t = \Theta(B) \mathbf{Z}_t$$
+
+where
+
+- VAR(p) term: $\Phi(B) = I_m - \Phi_1 B - \cdots - \Phi_p B^p$
+- VMA(q) term: $\Theta(B) = I_m + \Theta_1 B + \cdots + \Theta_q B^q$
+- Vector I(d) term: $\mathbf{U}_t = diag((I - B)^d)$
+
+Note that $\mathbf{Z_t}$ is (vector) white noise of mean zero.
+By default, its variance matrix is identity and we can change the value at the right `r emo::ji("smile")`
+
