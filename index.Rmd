@@ -1,18 +1,17 @@
 ---
-title: "Generating Long-range-dependent Time series"
+title: "Generating Multivariate Long-range-dependent Time series"
 output: 
   flexdashboard::flex_dashboard:
     orientation: rows
     vertical_layout: fill
     social: menu
-    source_code: embed
+    source_code: https://github.com/ygeunkim/sim-lrd/blob/master/index.Rmd
 runtime: shiny
 ---
 
 ```{r global, message=FALSE, include=FALSE}
 # shiny------------------------
 library(shiny)
-library(shinyMatrix)
 library(flexdashboard)
 # wrangling data and plot------
 library(tidyverse)
@@ -29,14 +28,14 @@ Sidebar {.sidebar}
 numericInput("seed", label = "Random seed:", value = 1, min = 1, step = 1)
 sliderInput("N", label = "Time Series Size:", min = 100, max = 5000, value = 200, step = 100)
 sliderInput("m", label =  "Time series Dimension:", min = 2, max = 20, value = 2, step = 1)
-sliderInput("ndim", label =  "Block Number of cov_matrix:", min = 1, max = 10, value = 1, step = 1)
+# sliderInput("ndim", label =  "Block Number of cov_matrix:", min = 1, max = 10, value = 1, step = 1)
 sliderInput("burnin", label =  "Burn-in:", min = 1000, max = 10000, value = 2000, step = 1000)
 sliderInput("lag.max", label = "ACF Lag until:", min = 10, max = 1000, value = 100, step = 1)
 ```
 
 See **How to** menu why this generated dataset is long-range dependent process.
 
-Download `cor.csv` and change value of correlation matrix for FARIMA model if you want:
+Download `cor.csv` and change value of correlation matrix for I(d) process if you want:
 
 ```{r}
 # correlation upload----------------------
@@ -75,7 +74,7 @@ lrd_data <- reactive({
   } else {
     COV <- read.csv(input$covfile$datapath, header = TRUE, stringsAsFactors = FALSE) %>% as.matrix()
   }
-  COV <- kronecker(diag(input$ndim), COV)
+  # COV <- kronecker(diag(input$ndim), COV)
   # LRD parameter---------------------------
   d <- runif(input$m, .1, .45)
   d <- floor(100 * d) / 100
@@ -101,6 +100,15 @@ output$data <- downloadHandler(
 downloadLink("data", label = "Download Vector LRD Series")
 ```
 
+```{r}
+selectInput(
+  "viridis", label = "Viridis color scale of ggplot:", 
+  choices = c("default ggplot", "magma", "inferno", "plasma", "viridis (default viridis)", "cividis"),
+  selected = "default ggplot",
+  multiple = FALSE
+)
+```
+
 The original code courtesy of professor [Changryong Baek](https://sites.google.com/view/crbaek).
 
 LRD Simulation
@@ -114,8 +122,8 @@ Row
 ```{r}
 # ggplot----------------------------------
 gg_lrd <- reactive({
-  lrd_data() %>% 
-    # as.data.frame() %>% 
+  p <- 
+    lrd_data() %>% 
     mutate(time_point = 1:n()) %>% 
     pivot_longer(-time_point, names_to = "variable", values_to = "values") %>% 
     ggplot(aes(x = time_point)) +
@@ -125,6 +133,12 @@ gg_lrd <- reactive({
       y = element_blank()
     ) +
     theme_minimal()
+  if (input$viridis != "default ggplot") {
+    p <- 
+      p +
+      scale_colour_viridis_d(option = input$viridis)
+  }
+  p
 })
 ```
 
@@ -138,7 +152,47 @@ plotlyOutput("timeplot")
 Row
 -----------------------------------------------------------------------
 
-### CCF
+### Spectral density (Periodogram)
+
+```{r}
+spectral <- reactive({
+  spec <- 
+    lrd_data() %>% 
+    spectrum(plot = FALSE) %>% 
+    .$spec %>% 
+    as.data.frame()
+  colnames(spec) <- paste0("x", 1:ncol(spec))
+  p <- 
+    spec %>% 
+    mutate(time_point = 1:n()) %>% 
+    pivot_longer(-time_point, names_to = "variable", values_to = "values") %>% 
+    mutate(values = log(values)) %>% 
+    ggplot(aes(x = time_point)) +
+    geom_path(aes(y = values, colour = variable), alpha = .7, show.legend = FALSE) +
+    labs(
+      x = "log(Frequency)",
+      y = "log(Periodogram)"
+    ) +
+    scale_x_continuous(trans = scales::log_trans()) +
+    theme_minimal()
+  if (input$viridis != "default ggplot") {
+    p <- 
+      p +
+      scale_colour_viridis_d(option = input$viridis)
+  }
+  p
+})
+```
+
+```{r}
+output$periodogram <- renderPlotly({
+  ggplotly(spectral())
+})
+plotlyOutput("periodogram")
+```
+
+Autocorrelation Function
+======================================================================
 
 ```{r}
 output$ccf <- renderPlotly({
@@ -155,9 +209,14 @@ plotlyOutput("ccf")
 How to
 ======================================================================
 
-### FARIMA
+### Fractionally integrated noise process
 
-We generate (multivariate) long-range-dependent time series using (vector) [FARIMA(0, d, 0)](https://en.wikipedia.org/wiki/Autoregressive_fractionally_integrated_moving_average) process. Here, $d \in (0, 0.5)$ gives LRD series. We choose $d$ randomly for each variable.
+We generate (multivariate) long-range-dependent time series using (vector) $I(d)$ process (i.e. $FARIMA(0, d, 0)$).
+Here, $d \in (0, 0.5)$ gives LRD series.
+
+We choose $d$ randomly for each variable.
+
+### $FARIMA(p, d, q)$
 
 In case of 1-dim,
 
