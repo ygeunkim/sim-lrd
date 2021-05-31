@@ -109,7 +109,8 @@ selectInput(
 )
 ```
 
-The original code courtesy of professor [Changryong Baek](https://sites.google.com/view/crbaek).
+Made by [Young Geun Kim](https://ygeunkim.github.io),
+courtesy of professor [Changryong Baek](https://sites.google.com/view/crbaek).
 
 LRD Simulation
 ======================================================================
@@ -204,7 +205,6 @@ output$ccf <- renderPlotly({
 })
 plotlyOutput("ccf")
 ```
-
 
 How to
 ======================================================================
